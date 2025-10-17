@@ -2,7 +2,7 @@
 
 # ==============================================================================
 # Redeco IT Group - Server Provisioning Script
-# Versie: 3.6 (Stdin/TTY Fix)
+# Versie: 3.7 (Compose Volume Fix)
 # Doel: Automatische configuratie van een nieuwe Ubuntu server met keuzemenu,
 #       beveiliging (IP Whitelist, Fail2Ban, SSH Key) en eindrapport.
 # ==============================================================================
@@ -196,8 +196,9 @@ install_portainer() {
     docker volume create portainer_data
     
     echo "INFO: docker-compose.yml aanmaken in $PORTAINER_DIR..."
+    # ---- BEGIN CORRECTIE ----
+    # 'version' verwijderd en 'volumes' block toegevoegd
     tee "$PORTAINER_DIR/docker-compose.yml" > /dev/null <<EOF
-version: '3.8'
 services:
   portainer:
     image: portainer/portainer-ce:latest
@@ -209,7 +210,12 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data
+
+volumes:
+  portainer_data:
+    external: true
 EOF
+    # ---- EINDE CORRECTIE ----
 
     echo "INFO: Portainer stack starten met docker compose..."
     docker compose up -d
@@ -267,8 +273,9 @@ install_jellyfin_docker() {
     docker volume create jellyfin_cache
     
     echo "INFO: docker-compose.yml aanmaken in $JELLYFIN_DIR..."
+    # ---- BEGIN CORRECTIE ----
+    # 'version' verwijderd en 'volumes' block toegevoegd
     tee "$JELLYFIN_DIR/docker-compose.yml" > /dev/null <<EOF
-version: '3.8'
 services:
   jellyfin:
     image: jellyfin/jellyfin:latest
@@ -282,7 +289,14 @@ services:
       # --- VOEG HIER HANDMATIG MEDIA MAPPEN TOE ---
       # Voorbeeld:
       # - /pad/op/server/naar/films:/media/films
+
+volumes:
+  jellyfin_config:
+    external: true
+  jellyfin_cache:
+    external: true
 EOF
+    # ---- EINDE CORRECTIE ----
 
     echo "INFO: Jellyfin stack starten met docker compose..."
     docker compose up -d
@@ -371,7 +385,7 @@ harden_ssh() {
 
 clear
 echo "================================================="
-echo "  Redeco IT Group - Server Configuratie Script v3.6"
+echo "  Redeco IT Group - Server Configuratie Script v3.7"
 echo "================================================="
 echo "Dit script zal de server configureren."
 echo ""
