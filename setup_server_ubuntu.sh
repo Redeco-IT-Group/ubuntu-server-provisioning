@@ -2,7 +2,7 @@
 
 # ==============================================================================
 # Redeco IT Group - Server Provisioning Script
-# Versie: 3.4 (Idempotent)
+# Versie: 3.4.1 (Cleaned)
 # Doel: Automatische configuratie van een nieuwe Ubuntu server met keuzemenu,
 #       beveiliging (IP Whitelist, Fail2Ban, SSH Key) en eindrapport.
 # ==============================================================================
@@ -490,4 +490,3 @@ if [ "${CHOICES[HARDEN_SSH]}" == "y" ]; then
 fi
 
 echo "================================================="
-
