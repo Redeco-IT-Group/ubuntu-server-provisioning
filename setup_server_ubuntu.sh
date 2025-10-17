@@ -2,7 +2,7 @@
 
 # ==============================================================================
 # Redeco IT Group - Server Provisioning Script
-# Versie: 3.4.1 (Cleaned)
+# Versie: 3.5 (Variabelen)
 # Doel: Automatische configuratie van een nieuwe Ubuntu server met keuzemenu,
 #       beveiliging (IP Whitelist, Fail2Ban, SSH Key) en eindrapport.
 # ==============================================================================
@@ -10,9 +10,32 @@
 # Stop het script onmiddellijk als een commando mislukt
 set -e
 
-# --- Globale Variabelen ---
-GENERATED_PASSWORD=""
+# ==============================================================================
+# --- CONFIGURATIE VARIABELEN ---
+# Pas de waarden hieronder aan voor jouw organisatie.
+# ==============================================================================
+
+# De Sudo-gebruiker die wordt aangemaakt
 ADMIN_USER="redeco_admin"
+
+# De *volledige* publieke SSH-sleutel voor de admin-gebruiker (tussen de aanhalingstekens)
+ADMIN_PUBLIC_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGSh7Q6TpLh1bhdjuSSUFYcD8dKmml1FArw6vOXPef9D"
+
+# De WAN IP-adressen die SSH-toegang krijgen (spatie-gescheiden binnen de haakjes)
+# Laat leeg om SSH vanaf overal toe te staan (niet aanbevolen): FIREWALL_TRUSTED_IPS=()
+FIREWALL_TRUSTED_IPS=("81.172.248.3" "31.149.54.249")
+
+# Een willekeurig wachtwoord voor de Nginx Proxy Manager database
+# Dit wordt automatisch gegenereerd. Je hoeft dit niet te wijzigen of te onthouden.
+NPM_DB_PASSWORD="npm_$(openssl rand -base64 12)"
+
+# ==============================================================================
+# --- EINDE CONFIGURATIE ---
+# (Wijzig hieronder niets, tenzij je de scriptlogica wilt aanpassen)
+# ==============================================================================
+
+# --- Globale Variabelen (NIET AANPASSEN) ---
+GENERATED_PASSWORD=""
 declare -A CHOICES # Associative array om keuzes op te slaan
 
 # --- Controleer op Root Rechten ---
@@ -41,14 +64,12 @@ prompt_yes_no() {
     choice=$(echo "$choice" | tr '[:upper:]' '[:lower:]') # naar lowercase
 
     if [ "$default" == "y" ]; then
-        # Accepteer 'j', 'ja', of leeg (Enter)
         if [[ "$choice" == "j" || "$choice" == "ja" || -z "$choice" ]]; then
             echo "y"
         else
             echo "n"
         fi
     else
-        # Accepteer alleen 'j' of 'ja'
         if [[ "$choice" == "j" || "$choice" == "ja" ]]; then
             echo "y"
         else
@@ -65,7 +86,6 @@ prompt_yes_no() {
 install_essentials() {
     echo "--- 1. Systeem updaten en essentiële pakketten installeren ---"
     apt-get update -y
-    # Inclusief Python 3, pip, venv, en UFW (firewall)
     apt-get install -y htop ufw curl wget gnupg lsb-release ca-certificates apt-transport-https \
                        python3-pip python3-venv unattended-upgrades
                        
@@ -76,32 +96,32 @@ install_essentials() {
 create_admin_user() {
     echo "--- 2. Beheerdersaccount '$ADMIN_USER' aanmaken ---"
     
-    # De publieke sleutel van Redeco IT (Bitwarden)
-    local PUBLIC_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGSh7Q6TpLh1bhdjuSSUFYcD8dKmml1FArw6vOXPef9D"
-
+    if [ -z "$ADMIN_PUBLIC_KEY" ]; then
+        echo "FOUT: ADMIN_PUBLIC_KEY is niet ingesteld in het configuratieblok bovenaan het script."
+        echo "Vul de publieke SSH-sleutel in en probeer het opnieuw."
+        exit 1
+    fi
+    
     if id "$ADMIN_USER" &>/dev/null; then
         echo "INFO: Gebruiker '$ADMIN_USER' bestaat al. SSH-sleutel wordt (opnieuw) ingesteld."
     else
         useradd -m -s /bin/bash "$ADMIN_USER"
-        usermod -aG sudo "$ADMIN_USER" # Geef sudo-rechten
+        usermod -aG sudo "$ADMIN_USER"
         echo "INFO: Gebruiker '$ADMIN_USER' aangemaakt en aan 'sudo' groep toegevoegd."
     fi
     
-    # Maak de .ssh map en authorized_keys aan
     local SSH_DIR="/home/$ADMIN_USER/.ssh"
     local AUTH_KEYS="$SSH_DIR/authorized_keys"
     
     mkdir -p "$SSH_DIR"
-    echo "$PUBLIC_KEY" > "$AUTH_KEYS"
+    echo "$ADMIN_PUBLIC_KEY" > "$AUTH_KEYS"
     
-    # Zet de cruciale permissies
     chmod 700 "$SSH_DIR"
     chmod 600 "$AUTH_KEYS"
     chown -R "$ADMIN_USER":"$ADMIN_USER" "$SSH_DIR"
     
     echo "✓ SSH Publieke Sleutel voor '$ADMIN_USER' is geïnstalleerd."
 
-    # Genereer een fallback wachtwoord voor 'sudo' en console-toegang
     GENERATED_PASSWORD=$(openssl rand -base64 16)
     echo "$ADMIN_USER:$GENERATED_PASSWORD" | chpasswd
     echo "✓ Fallback-wachtwoord ingesteld (voor 'sudo' en console-toegang)."
@@ -112,21 +132,25 @@ create_admin_user() {
 configure_firewall() {
     echo "--- 3. Firewall (UFW) configureren ---"
     
-    # De WAN IP's van Redeco IT Group zijn nu hardcoded
-    local TRUSTED_IPS=("81.172.248.3" "31.149.54.249")
-    echo "INFO: Beveiligde WAN IP's van Redeco IT Group worden ingesteld voor SSH..."
-
-    for ip in "${TRUSTED_IPS[@]}"; do
-        ufw allow from "$ip" to any port 22 proto tcp
-        echo "INFO: Toegang verleend aan $ip voor poort 22 (SSH)."
-    done
-    echo "✓ SSH-toegang beperkt tot: ${TRUSTED_IPS[*]}"
+    local TRUSTED_IPS=("${FIREWALL_TRUSTED_IPS[@]}")
+    
+    if [ ${#TRUSTED_IPS[@]} -eq 0 ]; then
+        ufw allow ssh
+        echo "WAARSCHUWING: Geen IP-whitelist ingesteld (FIREWALL_TRUSTED_IPS is leeg). SSH (poort 22) staat open voor de hele wereld."
+    else
+        echo "INFO: Beveiligde WAN IP's worden ingesteld voor SSH..."
+        for ip in "${TRUSTED_IPS[@]}"; do
+            ufw allow from "$ip" to any port 22 proto tcp
+            echo "INFO: Toegang verleend aan $ip voor poort 22 (SSH)."
+        done
+        echo "✓ SSH-toegang beperkt tot: ${TRUSTED_IPS[*]}"
+    fi
 
     # Voeg andere regels toe op basis van keuzes
     if [ "${CHOICES[PORTAINER]}" == "y" ]; then ufw allow 9443/tcp; ufw allow 8000/tcp; fi
     if [ "${CHOICES[NPM]}" == "y" ]; then ufw allow 80/tcp; ufw allow 443/tcp; ufw allow 81/tcp; fi
     if [ "${CHOICES[JELLYFIN]}" == "y" ]; then ufw allow 8096/tcp; fi
-    if [ "${CHOICES[OPENVPN]}" == "y" ]; then ufw allow 1194/udp; fi # Standaard poort OpenVPN
+    if [ "${CHOICES[OPENVPN]}" == "y" ]; then ufw allow 1194/udp; fi
 
     ufw --force enable
     echo "✓ Firewall (UFW) is geactiveerd."
@@ -146,7 +170,11 @@ install_docker() {
       
     apt-get update -y
     apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-    usermod -aG docker "$ADMIN_USER"
+    
+    # Voeg admin-gebruiker toe aan docker-groep (check of gebruiker al bestaat)
+    if id "$ADMIN_USER" &>/dev/null; then
+        usermod -aG docker "$ADMIN_USER"
+    fi
     
     echo "INFO: Docker 'hello-world' test uitvoeren..."
     if ! docker run --rm hello-world | grep -q "Hello from Docker!"; then
@@ -164,7 +192,6 @@ install_portainer() {
     mkdir -p "$PORTAINER_DIR"
     cd "$PORTAINER_DIR"
 
-    # Maak het data-volume aan (dit is idempotent, doet niets als het al bestaat)
     docker volume create portainer_data
     
     echo "INFO: docker-compose.yml aanmaken in $PORTAINER_DIR..."
@@ -202,29 +229,24 @@ install_datto_rmm() {
     echo "--- Installeren: Datto RMM Agent ---"
     local datto_url=""
     
-    # Vraag om de URL, deze wordt niet opgeslagen in het script
     echo "Plak de volledige Datto RMM download-URL (deze wordt niet in het script opgeslagen):"
     read -p "Datto URL: " datto_url
 
-    # Controleer of er iets is ingevoerd
     if [ -z "$datto_url" ]; then
         echo "INFO: Geen URL ingevoerd. Installatie van Datto RMM wordt overgeslagen."
-        return 0 # Keer succesvol terug om 'set -e' niet te triggeren
+        return 0
     fi
 
-    # Trim 'wget ' als de gebruiker dat meegkopieerd heeft
     datto_url=$(echo "$datto_url" | sed -e 's/^[ \t]*wget[ \t]*//')
 
     echo "INFO: Downloaden en uitvoeren van Datto RMM agent setup..."
     
-    # Gebruik de variabele in het wget commando
     if ! wget -O /tmp/setup_datto.sh "$datto_url"; then
         echo "FOUT: Downloaden van Datto RMM Agent mislukt. Controleer de URL."
         echo "INFO: Script gaat door, maar Datto is NIET geïnstalleerd."
-        return 0 # Keer succesvol terug, 'set -e' stopt het script niet
+        return 0
     fi
     
-    # Voer het gedownloade script uit en ruim op
     sh /tmp/setup_datto.sh
     rm /tmp/setup_datto.sh
     
@@ -240,7 +262,6 @@ install_jellyfin_docker() {
     mkdir -p "$JELLYFIN_DIR"
     cd "$JELLYFIN_DIR"
 
-    # Maak de volumes aan
     docker volume create jellyfin_config
     docker volume create jellyfin_cache
     
@@ -260,7 +281,6 @@ services:
       # --- VOEG HIER HANDMATIG MEDIA MAPPEN TOE ---
       # Voorbeeld:
       # - /pad/op/server/naar/films:/media/films
-      # - /pad/op/server/naar/series:/media/series
 EOF
 
     echo "INFO: Jellyfin stack starten met docker compose..."
@@ -284,7 +304,6 @@ install_npm_docker() {
 
     echo "INFO: docker-compose.yml aanmaken in $NPM_DIR..."
     
-    # Schrijf de officiële docker-compose file
     tee "$NPM_DIR/docker-compose.yml" > /dev/null <<EOF
 version: '3.8'
 services:
@@ -302,10 +321,10 @@ services:
     image: 'jc21/mariadb-aria:latest'
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: 'npm'
+      MYSQL_ROOT_PASSWORD: '${NPM_DB_PASSWORD}'
       MYSQL_DATABASE: 'npm'
       MYSQL_USER: 'npm'
-      MYSQL_PASSWORD: 'npm'
+      MYSQL_PASSWORD: '${NPM_DB_PASSWORD}'
     volumes:
       - ./data/mysql:/var/lib/mysql
 EOF
@@ -338,7 +357,6 @@ EOF
 # --- 11. SSH Hardening ---
 harden_ssh() {
     echo "--- Beveiligen: SSH-server (Harding) ---"
-    # Verbod op directe root login
     sed -i 's/^PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
     
     systemctl restart sshd
@@ -352,7 +370,7 @@ harden_ssh() {
 
 clear
 echo "================================================="
-echo "  Redeco IT Group - Server Configuratie Script v3.4"
+echo "  Redeco IT Group - Server Configuratie Script v3.5"
 echo "================================================="
 echo "Dit script zal de server configureren."
 echo ""
@@ -431,7 +449,11 @@ echo "✓ Essentiële Tools (Python3, UFW, etc.):"
 echo "  Pad: Standaard Systeempaden (bijv. /usr/bin/python3, /etc/ufw/)"
 echo ""
 echo "✓ Firewall (UFW):"
-echo "  Status: Actief. SSH-toegang beperkt tot: 81.172.248.3, 31.149.54.249"
+if [ ${#FIREWALL_TRUSTED_IPS[@]} -eq 0 ]; then
+    echo "  Status: Actief. WAARSCHUWING: SSH staat open voor de hele wereld."
+else
+    echo "  Status: Actief. SSH-toegang beperkt tot: ${FIREWALL_TRUSTED_IPS[*]}"
+fi
 echo ""
 
 if [ "${CHOICES[DOCKER]}" == "y" ]; then
