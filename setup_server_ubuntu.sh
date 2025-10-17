@@ -2,7 +2,7 @@
 
 # ==============================================================================
 # Redeco IT Group - Server Provisioning Script
-# Versie: 3.5 (Variabelen)
+# Versie: 3.6 (Stdin/TTY Fix)
 # Doel: Automatische configuratie van een nieuwe Ubuntu server met keuzemenu,
 #       beveiliging (IP Whitelist, Fail2Ban, SSH Key) en eindrapport.
 # ==============================================================================
@@ -45,7 +45,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 # ==============================================================================
-# --- HELPER FUNCTIE ---
+# --- HELPER FUNCTIE (MET /dev/tty FIX) ---
 # ==============================================================================
 
 # $1: Vraag, $2: Standaard (y/n)
@@ -60,7 +60,8 @@ prompt_yes_no() {
         prompt="$prompt [j/N]: "
     fi
 
-    read -p "$prompt" choice
+    # LEES DIRECT VAN TTY (toetsenbord) IPV STDIN (de pipe)
+    read -p "$prompt" choice < /dev/tty
     choice=$(echo "$choice" | tr '[:upper:]' '[:lower:]') # naar lowercase
 
     if [ "$default" == "y" ]; then
@@ -230,7 +231,7 @@ install_datto_rmm() {
     local datto_url=""
     
     echo "Plak de volledige Datto RMM download-URL (deze wordt niet in het script opgeslagen):"
-    read -p "Datto URL: " datto_url
+    read -p "Datto URL: " datto_url < /dev/tty
 
     if [ -z "$datto_url" ]; then
         echo "INFO: Geen URL ingevoerd. Installatie van Datto RMM wordt overgeslagen."
@@ -370,7 +371,7 @@ harden_ssh() {
 
 clear
 echo "================================================="
-echo "  Redeco IT Group - Server Configuratie Script v3.5"
+echo "  Redeco IT Group - Server Configuratie Script v3.6"
 echo "================================================="
 echo "Dit script zal de server configureren."
 echo ""
